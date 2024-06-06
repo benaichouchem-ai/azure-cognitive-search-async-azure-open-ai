@@ -1,6 +1,6 @@
 import logging, json, os, requests, datetime, base64
 import azure.functions as func
-import openai
+from openai import AzureOpenAI
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
 from tenacity import retry, wait_random_exponential, stop_after_attempt
 
@@ -13,12 +13,14 @@ logging.basicConfig(
     ]
 )
 
+client = AzureOpenAI(
+                azure_endpoint =  os.getenv('OPENAI_API_BASE') , 
+                api_key= os.getenv("OPENAI_API_KEY"),  
+                api_version= "2024-05-01-preview",
+            )
+
 # OpenAI Parameters
-openai.api_type = "azure"
-openai.api_base = os.getenv('OPENAI_API_BASE')
-openai.api_version = "2023-07-01-preview"
-openai.api_key = os.getenv("OPENAI_API_KEY")
-MODEL = os.getenv('OPENAI_DEPLOYMENT_NAME', "text-davinci-003")
+MODEL = os.getenv('OPENAI_DEPLOYMENT_NAME', "gpt-4o")
 TEMPERATURE = float(os.getenv('OPENAI_TEMPERATURE', 0.7))
 MAX_TOKENS = int(os.getenv('OPENAI_MAX_TOKENS', 800))
 TOP_P = float(os.getenv('OPENAI_TOP_P', 0.95))
@@ -43,7 +45,7 @@ def get_openai_response(text, prompt= ''):
 @retry(wait=wait_random_exponential(min=1, max=20), stop=stop_after_attempt(6))
 def get_openai_completion(text, prompt = ''):
     prompt = PROMPT if prompt == '' else prompt
-    response = openai.Completion.create(
+    response = client.completion.create(
               engine=MODEL,
               prompt=f"{text}:\n\n{prompt}",
               temperature=TEMPERATURE,
@@ -57,19 +59,17 @@ def get_openai_completion(text, prompt = ''):
 @retry(wait=wait_random_exponential(min=1, max=20), stop=stop_after_attempt(6))
 def get_openai_chat_completion(text, prompt = ''):
     prompt = PROMPT if prompt == '' else prompt
-    response = openai.ChatCompletion.create(
-            engine="gpt-35-turbo",
+    response =  client.chat.completions.create(
+            model=MODEL,
             messages = [
                 {"role":"system","content": prompt},
                 {"role":"user","content":text}],
             temperature=0.7,
             max_tokens=800,
             top_p=0.95,
-            frequency_penalty=0,
-            presence_penalty=0,
             stop=None
         )
-    return response['choices'][0]['message']['content']
+    return response.choices[0].message.content
     
 def send_to_queue(data, queue_name="openai_results_queue", scheduled_enqueue_time_utc=datetime.datetime.utcnow()):
     servicebus_client = ServiceBusClient.from_connection_string(conn_str=os.getenv('AzureServiceBusConnectionString'), logging_enable=True)
